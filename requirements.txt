@@ -1,0 +1,8 @@
+starlette>=0.40
+uvicorn>=0.30
+pydantic>=2.7
+requests>=2.31
+beautifulsoup4>=4.12
+
+# Optional: only needed for custom sources set to "render in a real browser"
+# playwright>=1.45   (then run: playwright install chromium)

@@ -1,0 +1,13 @@
+services:
+  pricewatch:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"        # put a reverse proxy with HTTPS in front before exposing publicly
+    environment:
+      PRICEWATCH_PASSWORD: ${PRICEWATCH_PASSWORD:?set PRICEWATCH_PASSWORD in .env}
+      PRICEWATCH_USER: ${PRICEWATCH_USER:-admin}
+    volumes:
+      - pricewatch-data:/data
+volumes:
+  pricewatch-data:

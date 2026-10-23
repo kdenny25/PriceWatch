@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PriceWatch</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#/"><span class="logo" aria-hidden="true">$</span> PriceWatch</a>
+    <nav id="nav">
+      <a href="#/" data-nav="home">Monitors</a>
+      <a href="#/check" data-nav="check">Price check</a>
+      <a href="#/alerts" data-nav="alerts">Alerts</a>
+      <a href="#/settings" data-nav="settings">Settings</a>
+    </nav>
+  </header>
+  <div id="banner"></div>
+  <main id="view" aria-live="polite"></main>
+  <dialog id="dlg"></dialog>
+  <div id="toast" role="status"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
