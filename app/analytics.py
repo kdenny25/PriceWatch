@@ -34,7 +34,8 @@ def split_outliers(totals) -> tuple[list[float], list[float], tuple[float, float
     """
     v = sorted(t for t in totals if t is not None and t > 0)
     if len(v) < 4:
-        return v, [], (0.0, float("inf"))
+        # too few to judge outliers: keep everything. Fences must stay finite (they go out as JSON).
+        return v, [], (0.0, float(v[-1]) if v else 0.0)
     m = percentile(v, 50)
     lo, hi = 0.2 * m, 5 * m
     v1 = [p for p in v if lo <= p <= hi]

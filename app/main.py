@@ -29,6 +29,16 @@ log = logging.getLogger("pricewatch")
 STATIC = Path(__file__).parent / "static"
 
 
+class SafeJSON(JSONResponse):
+    """JSON that refuses NaN/inf. A failure here is a server bug, never the caller's fault."""
+
+    def render(self, content) -> bytes:
+        try:
+            return super().render(content)
+        except ValueError as e:
+            raise RuntimeError(f"response could not be encoded as JSON: {e}") from e
+
+
 class MonitorIn(BaseModel):
     model_config = ConfigDict(extra="ignore")
     name: str = Field("", max_length=120)
@@ -132,7 +142,7 @@ def create_app(db_path: str | None = None, start_engine: bool = True, transport=
     user = os.environ.get("PRICEWATCH_USER", "admin")
 
     def err(status: int, msg: str) -> JSONResponse:
-        return JSONResponse({"detail": msg}, status_code=status)
+        return SafeJSON({"detail": msg}, status_code=status)
 
     def api(fn):
         async def wrapper(request):
@@ -147,6 +157,9 @@ def create_app(db_path: str | None = None, start_engine: bool = True, transport=
             except ValueError as e:
                 log.warning("%s %s rejected (400): %s", request.method, request.url.path, e)
                 return err(400, str(e))
+            except Exception:  # noqa: BLE001 - a bug on our side: log the traceback, tell the caller honestly
+                log.exception("%s %s failed", request.method, request.url.path)
+                return err(500, "Internal error. The server log has the details (docker compose logs pricewatch).")
         return wrapper
 
     def summary(m: dict) -> dict:
@@ -166,12 +179,12 @@ def create_app(db_path: str | None = None, start_engine: bool = True, transport=
 
     # ---- handlers -------------------------------------------------------
     async def health(request):
-        return JSONResponse({"ok": True})
+        return SafeJSON({"ok": True})
 
     @api
     async def status(request):
         s = settings.get()
-        return JSONResponse({
+        return SafeJSON({
             "version": __version__, "auth": bool(password),
             "ebay_configured": bool(s["ebay"]["app_id"] and s["ebay"]["cert_id"]),
             "channels": notify.enabled_channels(s),
@@ -183,8 +196,8 @@ def create_app(db_path: str | None = None, start_engine: bool = True, transport=
         if request.method == "POST":
             data = parse_monitor(await request.json())
             mid = db.save_monitor(data)
-            return JSONResponse(summary(db.get_monitor(mid)), status_code=201)
-        return JSONResponse([summary(m) for m in db.list_monitors()])
+            return SafeJSON(summary(db.get_monitor(mid)), status_code=201)
+        return SafeJSON([summary(m) for m in db.list_monitors()])
 
     @api
     async def monitor_one(request):
@@ -197,7 +210,7 @@ def create_app(db_path: str | None = None, start_engine: bool = True, transport=
             return Response(status_code=204)
         if request.method == "PUT":
             db.save_monitor(parse_monitor(await request.json()), mid)
-            return JSONResponse(summary(db.get_monitor(mid)))
+            return SafeJSON(summary(db.get_monitor(mid)))
 
         status_q = request.query_params.get("status", "active")
         if status_q not in ("active", "gone", "all"):
@@ -215,7 +228,7 @@ def create_app(db_path: str | None = None, start_engine: bool = True, transport=
         gone = db.q("SELECT total,first_seen,gone_at FROM listings WHERE monitor_id=? AND active=0 AND gone_at>?",
                     (mid, now - 60 * 86400))
         trend = db.q("SELECT ts,n,median,p25,min FROM snapshots WHERE monitor_id=? ORDER BY ts DESC LIMIT 400", (mid,))
-        return JSONResponse({
+        return SafeJSON({
             "monitor": summary(m),
             "market": a["market"], "suggested": a["suggested"], "histogram": a["histogram"],
             "by_source": a["by_source"], "listings": listings[:1500],
@@ -230,7 +243,7 @@ def create_app(db_path: str | None = None, start_engine: bool = True, transport=
         mid = request.path_params["mid"]
         if not db.get_monitor(mid):
             raise LookupError
-        return JSONResponse({"started": engine.spawn(mid)})
+        return SafeJSON({"started": engine.spawn(mid)})
 
     @api
     async def monitor_toggle(request):
@@ -240,7 +253,7 @@ def create_app(db_path: str | None = None, start_engine: bool = True, transport=
             raise LookupError
         db.x("UPDATE monitors SET enabled=?, next_run_at=? WHERE id=?",
              (0 if m["enabled"] else 1, clock(), mid))
-        return JSONResponse(summary(db.get_monitor(mid)))
+        return SafeJSON(summary(db.get_monitor(mid)))
 
     @api
     async def analyze(request):
@@ -248,7 +261,7 @@ def create_app(db_path: str | None = None, start_engine: bool = True, transport=
         data["id"] = None
         out = await engine.analyze(data)
         out["listings"] = out["listings"][:1500]
-        return JSONResponse(out)
+        return SafeJSON(out)
 
     @api
     async def alerts(request):
@@ -257,7 +270,7 @@ def create_app(db_path: str | None = None, start_engine: bool = True, transport=
                     "ORDER BY a.ts DESC LIMIT ?", (limit,))
         for r in rows:
             r["channels"] = json.loads(r["channels"] or "{}")
-        return JSONResponse(rows)
+        return SafeJSON(rows)
 
     @api
     async def settings_route(request):
@@ -265,8 +278,8 @@ def create_app(db_path: str | None = None, start_engine: bool = True, transport=
             body = await request.json()
             if not isinstance(body, dict):
                 raise ValueError("expected a JSON object")
-            return JSONResponse(settings.update(body))
-        return JSONResponse(settings.public())
+            return SafeJSON(settings.update(body))
+        return SafeJSON(settings.public())
 
     @api
     async def settings_test(request):
@@ -276,7 +289,10 @@ def create_app(db_path: str | None = None, start_engine: bool = True, transport=
         res = await notify.send(settings.get(), "PriceWatch test",
                                 "If you can read this, notifications from PriceWatch work.",
                                 None, [ch], force=True)
-        return JSONResponse({"results": res})
+        return SafeJSON({"results": res})
+
+    async def favicon(request):
+        return Response(status_code=204)
 
     async def index(request):
         return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
@@ -299,6 +315,7 @@ def create_app(db_path: str | None = None, start_engine: bool = True, transport=
 
     routes = [
         Route("/", index),
+        Route("/favicon.ico", favicon),
         Route("/api/health", health),
         Route("/api/status", status),
         Route("/api/monitors", monitors, methods=["GET", "POST"]),

@@ -107,6 +107,12 @@ class TestAnalytics(unittest.TestCase):
         self.assertEqual({l["total"]: l["flag"] for l in near["listings"]}[400], "below_range")
         self.assertIsNotNone(out["suggested"]["great_deal"])
 
+    def test_small_sets_are_json_safe(self):
+        import json
+        for n in range(0, 6):
+            out = analytics.build([{"total": 100.0 + i, "source": "ebay"} for i in range(n)])
+            json.dumps(out, allow_nan=False)           # raises on inf/nan
+
     def test_sold_estimate(self):
         gone = [{"total": 400 + i, "first_seen": 0, "gone_at": 86400 * 3} for i in range(5)]
         s = analytics.sold_estimate(gone)

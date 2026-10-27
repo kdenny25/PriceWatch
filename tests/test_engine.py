@@ -173,6 +173,17 @@ class EngineTest(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(out["market"]["median"], 540.0, delta=15)
         self.assertEqual(self.db.one("SELECT COUNT(*) c FROM listings")["c"], 0)
 
+    async def test_analyze_with_few_results_is_serializable(self):
+        import json
+        self.ebay_listings({1: (400, "RTX 3080 FE"), 2: (450, "RTX 3080 TUF")})
+        out = await self.eng.analyze(parse_monitor(EBAY_MON))
+        json.dumps(out, allow_nan=False)
+        self.assertEqual(out["market"]["n"], 2)
+        self.ebay_listings({})
+        out = await self.eng.analyze(parse_monitor(EBAY_MON))       # zero results
+        json.dumps(out, allow_nan=False)
+        self.assertIsNone(out["market"])
+
     async def test_ebay_request_shape(self):
         mid = self.monitor(query='rtx 3080 -laptop', min_price=100, sources=[{"type": "ebay", "condition": "used"}])
         self.ebay_listings({1: (400, "RTX 3080 laptop"), 2: (450, "RTX 3080 desktop")})
