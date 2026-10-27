@@ -31,6 +31,7 @@ async function api(path, opts = {}) {
   if (!r.ok) {
     let msg = r.statusText;
     try { const j = await r.json(); msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail); } catch (e) { /* keep statusText */ }
+    console.error(`PriceWatch: ${opts.method || "GET"} /api${path} failed (HTTP ${r.status}): ${msg}`);
     throw new Error(msg);
   }
   return r.status === 204 ? null : r.json();
@@ -366,6 +367,8 @@ function openEditor(m = null, prefill = null) {
       interval_minutes: Number(f.interval_minutes.value || 30), max_alerts_per_run: Number(f.max_alerts_per_run.value || 5),
       enabled: m ? m.enabled : true, notify_channels: m ? m.notify_channels : null,
     };
+    const bad = checkSources(body);
+    if (bad) { $("#mon-err").textContent = bad; return; }
     $("#mon-save").disabled = true;
     try {
       const saved = m ? await api(`/monitors/${m.id}`, { method: "PUT", body }) : await api("/monitors", { method: "POST", body });
@@ -404,6 +407,21 @@ async function viewMonitor(id) {
 const alertsList = (rows) => rows.length ? `<div class="tablewrap"><table><tbody>${rows.map((a) => `<tr><td class="small" style="white-space:nowrap">${ago(a.ts)}</td><td class="num"><b>${money(a.total)}</b></td><td><a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a><div class="muted small">${esc(srcLabel(a.source))} · ${esc(a.reason || "")}</div></td></tr>`).join("")}</tbody></table></div>` : "";
 const runsList = (rows) => rows.length ? `<div class="tablewrap"><table><tbody>${rows.map((r) => `<tr><td class="small" style="white-space:nowrap">${ago(r.ts)}</td><td>${esc(srcLabel(r.source))}</td><td class="${r.ok ? "pill-ok" : "pill-bad"}">${r.ok ? r.count + " listings" : "failed"}</td><td class="small muted">${esc(r.error || "")}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No runs yet.</p>`;
 
+/* Catch the common mistakes in the browser, with a message that says what to fix. */
+function checkSources(form) {
+  if (!form.query) return "Enter what you're looking for.";
+  if (!form.sources.length) return "Tick at least one place to look (eBay, Craigslist or a custom site).";
+  for (const s of form.sources) {
+    if (s.type === "craigslist" && !String(s.regions).trim()) return "Craigslist is ticked but no region is entered. Add one (like “tampa”) or untick Craigslist.";
+    if (s.type === "generic") {
+      if (!s.name) return "A custom site needs a name.";
+      if (!s.url.includes("{query}")) return `Custom site “${s.name}”: the search URL must contain {query}.`;
+      if (!s.item_selector || !s.title_selector || !s.price_selector) return `Custom site “${s.name}”: fill in the result item, title and price selectors.`;
+    }
+  }
+  return "";
+}
+
 /* ---------- price check ---------- */
 let lastCheck = null;
 async function viewCheck() {
@@ -412,9 +430,10 @@ async function viewCheck() {
   $("#view").innerHTML = `<div class="pagehead"><div><h1>Price check</h1><div class="sub">Find out what something goes for right now, and what a good price looks like, without creating a monitor.</div></div></div>
     <form class="card form" id="check-form" novalidate>
       <label class="f">What are you looking for?<input name="query" required value="${esc(c.query || "")}" placeholder='e.g. iphone 14 pro 256gb -case'></label>
-      ${sourcesEditorHtml(c.sources || [{ type: "ebay" }, { type: "craigslist", regions: [] }])}
+      ${sourcesEditorHtml(c.sources || [{ type: "ebay" }])}
       <div class="cols"><label class="f">Ignore listings under ($)<input name="min_price" type="number" min="0" step="any" value="${esc(c.min_price ?? "")}"></label>
         <label class="check" style="align-self:end"><input type="checkbox" name="skip_junk" ${c.skip_junk === false ? "" : "checked"}> Skip parts / broken / untested</label></div>
+      <div class="err" id="check-err" role="alert"></div>
       <div class="row"><button class="btn primary" id="check-go" type="submit">Check market</button><span class="muted small" id="check-msg"></span></div>
     </form><div id="check-out" class="stack" style="margin-top:14px"></div>`;
   if (lastCheck) renderCheck(lastCheck.data);
@@ -423,9 +442,12 @@ async function viewCheck() {
     const f = ev.target.elements;
     const form = { query: f.query.value.trim(), sources: readSources(ev.target), skip_junk: f.skip_junk.checked,
       min_price: f.min_price.value === "" ? null : Number(f.min_price.value), name: f.query.value.trim() };
+    const bad = checkSources(form);
+    $("#check-err").textContent = bad || "";
+    if (bad) return;
     $("#check-go").disabled = true; $("#check-msg").textContent = "Searching… this can take up to a minute.";
     try { const data = await api("/analyze", { method: "POST", body: form }); lastCheck = { form, data }; renderCheck(data); $("#check-msg").textContent = ""; }
-    catch (e) { $("#check-msg").textContent = ""; toast(e.message, true); }
+    catch (e) { $("#check-msg").textContent = ""; $("#check-err").textContent = e.message; }
     $("#check-go").disabled = false;
   };
 }

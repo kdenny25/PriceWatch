@@ -232,3 +232,25 @@ class TestSettingsAndNotify(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRequestErrors(unittest.TestCase):
+    """Rejected requests must say what to fix (the UI shows these messages verbatim)."""
+
+    def msg(self, body):
+        from pydantic import ValidationError
+        from app.main import friendly, parse_monitor
+        try:
+            parse_monitor(body)
+        except ValidationError as e:
+            return "; ".join(friendly(x) for x in e.errors())
+        except ValueError as e:
+            return str(e)
+        return None
+
+    def test_messages(self):
+        self.assertIn("at least one place to look", self.msg({"query": "x", "sources": []}))
+        self.assertIn("what you're looking for", self.msg({"query": "", "sources": [{"type": "ebay"}]}))
+        self.assertIn("at least one region", self.msg({"query": "x", "sources": [{"type": "craigslist", "regions": ""}]}))
+        self.assertIn("Check interval", self.msg({"query": "x", "sources": [{"type": "ebay"}], "interval_minutes": 1}))
+        self.assertIsNone(self.msg({"query": "x", "sources": [{"type": "ebay"}]}))

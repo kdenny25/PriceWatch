@@ -56,6 +56,24 @@ class MonitorIn(BaseModel):
         return [x.strip() for x in (v or []) if isinstance(x, str) and x.strip()]
 
 
+FIELD_NAMES = {
+    "query": "Search text", "sources": "Where to look", "interval_minutes": "Check interval",
+    "max_alerts_per_run": "Max deals per notification", "target_percentile": "Cheapest-% setting",
+    "min_discount_pct": "Discount %", "min_price": "Minimum price", "max_price": "Maximum price", "name": "Name",
+}
+
+
+def friendly(e: dict) -> str:
+    """Turn a pydantic error into a sentence a person can act on."""
+    field = str(e["loc"][0]) if e["loc"] else "request"
+    label = FIELD_NAMES.get(field, field)
+    if field == "sources" and e["type"] == "too_short":
+        return "Pick at least one place to look (eBay, Craigslist or a custom site)"
+    if field == "query" and e["type"] == "string_too_short":
+        return "Enter what you're looking for"
+    return f"{label}: {e['msg']}"
+
+
 def parse_monitor(body) -> dict:
     if not isinstance(body, dict):
         raise ValueError("expected a JSON object")
@@ -121,10 +139,13 @@ def create_app(db_path: str | None = None, start_engine: bool = True, transport=
             try:
                 return await fn(request)
             except ValidationError as e:
-                return err(422, "; ".join(f"{'.'.join(str(p) for p in x['loc'])}: {x['msg']}" for x in e.errors()))
+                msg = "; ".join(friendly(x) for x in e.errors())
+                log.warning("%s %s rejected (422): %s", request.method, request.url.path, msg)
+                return err(422, msg)
             except LookupError:
                 return err(404, "not found")
             except ValueError as e:
+                log.warning("%s %s rejected (400): %s", request.method, request.url.path, e)
                 return err(400, str(e))
         return wrapper
 
